@@ -13,18 +13,20 @@ DB = "dating.db"
 dp = Dispatcher()
 
 
-# =========================
-# БАЗА ДАННЫХ
-# =========================
+def db():
+    return sqlite3.connect(DB)
+
 
 def init_db():
-    con = sqlite3.connect(DB)
+    con = db()
 
     con.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
             name TEXT,
             age INTEGER,
+            gender TEXT,
+            looking_for TEXT,
             min_age INTEGER,
             max_age INTEGER,
             city TEXT,
@@ -45,7 +47,8 @@ def init_db():
     con.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             from_id INTEGER,
-            to_id INTEGER
+            to_id INTEGER,
+            UNIQUE(from_id, to_id)
         )
     """)
 
@@ -54,48 +57,36 @@ def init_db():
 
 
 def get_user(user_id):
-    con = sqlite3.connect(DB)
-
+    con = db()
     user = con.execute(
         "SELECT * FROM users WHERE id=?",
         (user_id,)
     ).fetchone()
-
     con.close()
-
     return user
 
 
 def save(user_id, field, value):
-    con = sqlite3.connect(DB)
-
+    con = db()
     con.execute(
         f"UPDATE users SET {field}=? WHERE id=?",
         (value, user_id)
     )
-
     con.commit()
     con.close()
 
 
-# =========================
-# КНОПКИ
-# =========================
-
-def main_menu():
-
+def menu():
     builder = InlineKeyboardBuilder()
 
     builder.button(
         text="🔎 Смотреть анкеты",
         callback_data="browse"
     )
-
     builder.button(
         text="👤 Моя анкета",
         callback_data="profile"
     )
-
     builder.button(
         text="💕 Мои мэтчи",
         callback_data="matches"
@@ -106,8 +97,48 @@ def main_menu():
     return builder.as_markup()
 
 
-def profile_buttons(user_id):
+def gender_keyboard():
+    builder = InlineKeyboardBuilder()
 
+    builder.button(
+        text="👨 Мужской",
+        callback_data="gender_male"
+    )
+
+    builder.button(
+        text="👩 Женский",
+        callback_data="gender_female"
+    )
+
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def looking_keyboard():
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="👨 Мужчин",
+        callback_data="looking_male"
+    )
+
+    builder.button(
+        text="👩 Женщин",
+        callback_data="looking_female"
+    )
+
+    builder.button(
+        text="👥 Всех",
+        callback_data="looking_all"
+    )
+
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def profile_keyboard(user_id):
     builder = InlineKeyboardBuilder()
 
     builder.button(
@@ -130,20 +161,12 @@ def profile_buttons(user_id):
     return builder.as_markup()
 
 
-# =========================
-# START
-# =========================
-
 @dp.message(CommandStart())
 async def start(message: Message):
-
-    con = sqlite3.connect(DB)
+    con = db()
 
     con.execute(
-        """
-        INSERT OR IGNORE INTO users(id, state)
-        VALUES (?, ?)
-        """,
+        "INSERT OR IGNORE INTO users(id, state) VALUES (?, ?)",
         (message.from_user.id, "name")
     )
 
@@ -152,21 +175,18 @@ async def start(message: Message):
 
     user = get_user(message.from_user.id)
 
-    if user and user[1] and user[2]:
+    if user and user[1] and user[2] and user[3]:
 
         await message.answer(
-            "❤️ Василий Знакомович\n\n"
+            "❤️ <b>Василий Знакомович</b>\n\n"
             "С возвращением!",
-            reply_markup=main_menu()
+            parse_mode="HTML",
+            reply_markup=menu()
         )
 
         return
 
-    save(
-        message.from_user.id,
-        "state",
-        "name"
-    )
+    save(message.from_user.id, "state", "name")
 
     await message.answer(
         "❤️ <b>Василий Знакомович</b>\n\n"
@@ -176,10 +196,6 @@ async def start(message: Message):
     )
 
 
-# =========================
-# РЕГИСТРАЦИЯ
-# =========================
-
 @dp.message(F.text)
 async def registration(message: Message):
 
@@ -188,240 +204,172 @@ async def registration(message: Message):
     if not user:
         return
 
-    state = user[8]
-
-    # ИМЯ
+    state = user[10]
 
     if state == "name":
 
-        save(
-            message.from_user.id,
-            "name",
-            message.text[:40]
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "age"
-        )
+        save(message.from_user.id, "name", message.text[:40])
+        save(message.from_user.id, "state", "age")
 
         await message.answer(
             "2️⃣ Сколько тебе лет?"
         )
 
-    # ВОЗРАСТ
-
     elif state == "age":
 
         try:
-
             age = int(message.text)
-
         except ValueError:
-
-            await message.answer(
-                "Напиши возраст числом."
-            )
-
+            await message.answer("Напиши возраст числом.")
             return
 
         if age < 13 or age > 100:
-
             await message.answer(
                 "Возраст должен быть от 13 до 100 лет."
             )
-
             return
 
-        save(
-            message.from_user.id,
-            "age",
-            age
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "min_age"
-        )
+        save(message.from_user.id, "age", age)
+        save(message.from_user.id, "state", "gender")
 
         await message.answer(
-            "3️⃣ С какого возраста ты хочешь видеть людей?\n\n"
-            "Например: 16"
+            "3️⃣ Выбери свой пол:",
+            reply_markup=gender_keyboard()
         )
-
-    # МИНИМАЛЬНЫЙ ВОЗРАСТ
 
     elif state == "min_age":
 
         try:
-
-            min_age = int(message.text)
-
+            value = int(message.text)
         except ValueError:
-
-            await message.answer(
-                "Напиши число."
-            )
-
+            await message.answer("Напиши возраст числом.")
             return
 
         user_age = user[2]
 
-        if min_age < 13 or min_age > 100:
+        if user_age < 18:
+            if value < 13 or value > 17:
+                await message.answer(
+                    "Для пользователей младше 18 лет можно выбирать только возраст 13–17."
+                )
+                return
+        else:
+            if value < 18 or value > 100:
+                await message.answer(
+                    "Для пользователей 18+ можно выбирать только 18+."
+                )
+                return
 
-            await message.answer(
-                "Возраст должен быть от 13 до 100."
-            )
-
-            return
-
-        if user_age < 18 and min_age >= 18:
-
-            await message.answer(
-                "Для пользователей младше 18 лет можно выбирать только возраст до 17."
-            )
-
-            return
-
-        if user_age >= 18 and min_age < 18:
-
-            await message.answer(
-                "Для пользователей 18+ можно выбирать только 18+."
-            )
-
-            return
-
-        save(
-            message.from_user.id,
-            "min_age",
-            min_age
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "max_age"
-        )
+        save(message.from_user.id, "min_age", value)
+        save(message.from_user.id, "state", "max_age")
 
         await message.answer(
-            "4️⃣ До какого возраста ты хочешь видеть людей?\n\n"
-            "Например: 25"
+            "6️⃣ До какого возраста ищем?"
         )
-
-    # МАКСИМАЛЬНЫЙ ВОЗРАСТ
 
     elif state == "max_age":
 
         try:
-
-            max_age = int(message.text)
-
+            value = int(message.text)
         except ValueError:
-
-            await message.answer(
-                "Напиши число."
-            )
-
+            await message.answer("Напиши возраст числом.")
             return
 
-        min_age = user[3]
+        min_age = user[5]
         user_age = user[2]
 
-        if max_age < min_age:
-
+        if value < min_age:
             await message.answer(
                 "Максимальный возраст не может быть меньше минимального."
             )
-
             return
 
-        if user_age < 18 and max_age >= 18:
-
+        if user_age < 18 and value > 17:
             await message.answer(
-                "Для пользователей младше 18 лет максимальный возраст — 17."
+                "Для пользователей младше 18 лет максимум — 17."
             )
-
             return
 
-        if user_age >= 18 and max_age < 18:
-
+        if user_age >= 18 and value < 18:
             await message.answer(
-                "Для пользователей 18+ минимальный возраст — 18."
+                "Для пользователей 18+ минимум — 18."
             )
-
             return
 
-        save(
-            message.from_user.id,
-            "max_age",
-            max_age
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "city"
-        )
+        save(message.from_user.id, "max_age", value)
+        save(message.from_user.id, "state", "city")
 
         await message.answer(
-            "5️⃣ В каком городе ты живёшь?"
+            "7️⃣ В каком городе ты живёшь?"
         )
-
-    # ГОРОД
 
     elif state == "city":
 
-        save(
-            message.from_user.id,
-            "city",
-            message.text[:50]
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "bio"
-        )
+        save(message.from_user.id, "city", message.text[:50])
+        save(message.from_user.id, "state", "bio")
 
         await message.answer(
-            "6️⃣ Расскажи немного о себе."
+            "8️⃣ Расскажи немного о себе."
         )
-
-    # О СЕБЕ
 
     elif state == "bio":
 
-        save(
-            message.from_user.id,
-            "bio",
-            message.text[:500]
-        )
-
-        save(
-            message.from_user.id,
-            "state",
-            "photo"
-        )
+        save(message.from_user.id, "bio", message.text[:500])
+        save(message.from_user.id, "state", "photo")
 
         await message.answer(
-            "7️⃣ Теперь отправь свою фотографию 📸"
+            "9️⃣ Теперь отправь свою фотографию 📸"
         )
-
-    # ГОТОВО
 
     elif state == "done":
 
         await message.answer(
             "Выбери действие:",
-            reply_markup=main_menu()
+            reply_markup=menu()
         )
 
 
-# =========================
-# ФОТО
-# =========================
+@dp.callback_query(F.data.startswith("gender_"))
+async def gender(callback: CallbackQuery):
+
+    value = callback.data.replace("gender_", "")
+
+    save(callback.from_user.id, "gender", value)
+    save(callback.from_user.id, "state", "looking")
+
+    await callback.message.answer(
+        "4️⃣ Кого ты хочешь видеть?",
+        reply_markup=looking_keyboard()
+    )
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("looking_"))
+async def looking(callback: CallbackQuery):
+
+    value = callback.data.replace("looking_", "")
+
+    save(callback.from_user.id, "looking_for", value)
+    save(callback.from_user.id, "state", "min_age")
+
+    user = get_user(callback.from_user.id)
+
+    if user[2] < 18:
+        text = (
+            "5️⃣ С какого возраста ищем?\n\n"
+            "Можно выбирать только 13–17."
+        )
+    else:
+        text = (
+            "5️⃣ С какого возраста ищем?\n\n"
+            "Можно выбирать только 18+."
+        )
+
+    await callback.message.answer(text)
+
+    await callback.answer()
+
 
 @dp.message(F.photo)
 async def photo(message: Message):
@@ -431,34 +379,21 @@ async def photo(message: Message):
     if not user:
         return
 
-    if user[8] != "photo":
+    if user[10] != "photo":
         return
 
     photo_id = message.photo[-1].file_id
 
-    save(
-        message.from_user.id,
-        "photo",
-        photo_id
-    )
-
-    save(
-        message.from_user.id,
-        "state",
-        "done"
-    )
+    save(message.from_user.id, "photo", photo_id)
+    save(message.from_user.id, "state", "done")
 
     await message.answer(
         "🎉 <b>Анкета готова!</b>\n\n"
         "Теперь можно смотреть анкеты.",
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=menu()
     )
 
-
-# =========================
-# МОЯ АНКЕТА
-# =========================
 
 @dp.callback_query(F.data == "profile")
 async def profile(callback: CallbackQuery):
@@ -472,28 +407,52 @@ async def profile(callback: CallbackQuery):
         )
 
         await callback.answer()
-
         return
 
-    _, uid, name, age, min_age, max_age, city, bio, photo, state = user
+    (
+        uid,
+        _,
+        name,
+        age,
+        gender_value,
+        looking_for,
+        min_age,
+        max_age,
+        city,
+        bio,
+        photo,
+        state
+    ) = user
+
+    gender_text = (
+        "👨 Мужской"
+        if gender_value == "male"
+        else "👩 Женский"
+    )
+
+    if looking_for == "male":
+        looking_text = "👨 Мужчин"
+    elif looking_for == "female":
+        looking_text = "👩 Женщин"
+    else:
+        looking_text = "👥 Всех"
 
     text = (
         f"👤 <b>{name}</b>, {age}\n"
-        f"📍 {city}\n"
-        f"🔎 Ищу: {min_age}–{max_age}\n\n"
+        f"{gender_text}\n"
+        f"🔎 Ищу: {looking_text}\n"
+        f"🎂 Возраст: {min_age}–{max_age}\n"
+        f"📍 {city}\n\n"
         f"{bio or 'Без описания'}"
     )
 
     if photo:
-
         await callback.message.answer_photo(
             photo,
             caption=text,
             parse_mode="HTML"
         )
-
     else:
-
         await callback.message.answer(
             text,
             parse_mode="HTML"
@@ -502,67 +461,103 @@ async def profile(callback: CallbackQuery):
     await callback.answer()
 
 
-# =========================
-# ПОИСК АНКЕТ
-# =========================
-
 @dp.callback_query(F.data == "browse")
 async def browse(callback: CallbackQuery):
 
     me = get_user(callback.from_user.id)
 
-    if not me or me[8] != "done":
+    if not me or me[10] != "done":
 
         await callback.message.answer(
             "Сначала создай анкету через /start."
         )
 
         await callback.answer()
-
         return
 
-    my_age = me[2]
-    min_age = me[3]
-    max_age = me[4]
-
-    # Разделяем несовершеннолетних и взрослых
+    my_age = me[3]
+    my_gender = me[4]
+    looking_for = me[5]
+    min_age = me[6]
+    max_age = me[7]
 
     if my_age < 18:
-
-        min_allowed = 13
-        max_allowed = 17
-
+        allowed_min = 13
+        allowed_max = 17
     else:
+        allowed_min = 18
+        allowed_max = 100
 
-        min_allowed = 18
-        max_allowed = 100
+    min_search = max(min_age, allowed_min)
+    max_search = min(max_age, allowed_max)
 
-    min_search = max(min_age, min_allowed)
-    max_search = min(max_age, max_allowed)
+    con = db()
 
-    con = sqlite3.connect(DB)
+    if looking_for == "all":
 
-    user = con.execute(
+        query = """
+            SELECT *
+            FROM users
+            WHERE id != ?
+            AND state = 'done'
+            AND age BETWEEN ? AND ?
+            AND id NOT IN (
+                SELECT to_id
+                FROM likes
+                WHERE from_id = ?
+            )
+            AND id NOT IN (
+                SELECT to_id
+                FROM reports
+                WHERE from_id = ?
+            )
+            ORDER BY RANDOM()
+            LIMIT 1
         """
-        SELECT *
-        FROM users
-        WHERE id != ?
-        AND state = 'done'
-        AND age BETWEEN ? AND ?
-        AND id NOT IN (
-            SELECT to_id
-            FROM likes
-            WHERE from_id = ?
-        )
-        ORDER BY RANDOM()
-        LIMIT 1
-        """,
-        (
+
+        params = (
             callback.from_user.id,
             min_search,
             max_search,
+            callback.from_user.id,
             callback.from_user.id
         )
+
+    else:
+
+        query = """
+            SELECT *
+            FROM users
+            WHERE id != ?
+            AND state = 'done'
+            AND age BETWEEN ? AND ?
+            AND gender = ?
+            AND id NOT IN (
+                SELECT to_id
+                FROM likes
+                WHERE from_id = ?
+            )
+            AND id NOT IN (
+                SELECT to_id
+                FROM reports
+                WHERE from_id = ?
+            )
+            ORDER BY RANDOM()
+            LIMIT 1
+        """
+
+        params = (
+            callback.from_user.id,
+            min_search,
+            max_search,
+            looking_for,
+            callback.from_user.id,
+            callback.from_user.id
+        )
+
+    user = con.execute(
+        query,
+        params
     ).fetchone()
 
     con.close()
@@ -570,15 +565,26 @@ async def browse(callback: CallbackQuery):
     if not user:
 
         await callback.message.answer(
-            "😔 Пока подходящих анкет нет.\n\n"
-            "Попробуй зайти позже."
+            "😔 Подходящих анкет пока нет."
         )
 
         await callback.answer()
-
         return
 
-    _, uid, name, age, umin, umax, city, bio, photo, state = user
+    (
+        uid,
+        _,
+        name,
+        age,
+        gender_value,
+        _,
+        _,
+        _,
+        city,
+        bio,
+        photo,
+        _
+    ) = user
 
     text = (
         f"👤 <b>{name}</b>, {age}\n"
@@ -592,7 +598,7 @@ async def browse(callback: CallbackQuery):
             photo,
             caption=text,
             parse_mode="HTML",
-            reply_markup=profile_buttons(uid)
+            reply_markup=profile_keyboard(uid)
         )
 
     else:
@@ -600,15 +606,11 @@ async def browse(callback: CallbackQuery):
         await callback.message.answer(
             text,
             parse_mode="HTML",
-            reply_markup=profile_buttons(uid)
+            reply_markup=profile_keyboard(uid)
         )
 
     await callback.answer()
 
-
-# =========================
-# ЛАЙК
-# =========================
 
 @dp.callback_query(F.data.startswith("like:"))
 async def like(callback: CallbackQuery):
@@ -619,7 +621,7 @@ async def like(callback: CallbackQuery):
 
     me = callback.from_user.id
 
-    con = sqlite3.connect(DB)
+    con = db()
 
     con.execute(
         """
@@ -647,7 +649,7 @@ async def like(callback: CallbackQuery):
     con.commit()
     con.close()
 
-    await callback.answer("❤️ Лайк!")
+    await callback.answer("❤️ Нравится!")
 
     if mutual:
 
@@ -659,35 +661,23 @@ async def like(callback: CallbackQuery):
         )
 
         try:
-
             await callback.bot.send_message(
                 target,
                 "💕 У тебя новый взаимный лайк!"
             )
-
         except Exception:
             pass
 
     await browse(callback)
 
 
-# =========================
-# ПРОПУСК
-# =========================
-
 @dp.callback_query(F.data.startswith("skip:"))
 async def skip(callback: CallbackQuery):
 
-    await callback.answer(
-        "👎 Пропущено"
-    )
+    await callback.answer("👎 Пропущено")
 
     await browse(callback)
 
-
-# =========================
-# ЖАЛОБА
-# =========================
 
 @dp.callback_query(F.data.startswith("report:"))
 async def report(callback: CallbackQuery):
@@ -696,11 +686,11 @@ async def report(callback: CallbackQuery):
         callback.data.split(":")[1]
     )
 
-    con = sqlite3.connect(DB)
+    con = db()
 
     con.execute(
         """
-        INSERT INTO reports(from_id, to_id)
+        INSERT OR IGNORE INTO reports(from_id, to_id)
         VALUES (?, ?)
         """,
         (callback.from_user.id, target)
@@ -710,24 +700,20 @@ async def report(callback: CallbackQuery):
     con.close()
 
     await callback.answer(
-        "Жалоба отправлена"
+        "🚨 Жалоба отправлена"
     )
 
     await callback.message.answer(
-        "🚨 Жалоба зарегистрирована."
+        "Жалоба зарегистрирована."
     )
 
     await browse(callback)
 
 
-# =========================
-# МЭТЧИ
-# =========================
-
 @dp.callback_query(F.data == "matches")
 async def matches(callback: CallbackQuery):
 
-    con = sqlite3.connect(DB)
+    con = db()
 
     rows = con.execute(
         """
@@ -773,14 +759,9 @@ async def matches(callback: CallbackQuery):
     await callback.answer()
 
 
-# =========================
-# ЗАПУСК
-# =========================
-
 async def main():
 
     if not TOKEN:
-
         raise RuntimeError(
             "BOT_TOKEN не найден."
         )
@@ -793,5 +774,4 @@ async def main():
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
